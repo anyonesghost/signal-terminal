@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SIGNAL // TERMINAL</title>
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <div id="rack">
+
+    <!-- Top panel: indicator LEDs + unit label -->
+    <div id="rack-top">
+      <div id="indicators">
+        <span class="dot dot-green"></span>
+        <span class="dot dot-off"></span>
+        <span class="dot dot-off"></span>
+      </div>
+      <div id="unit-label">SIGNAL // I/O TERMINAL &mdash; UNIT 04</div>
+    </div>
+
+    <!-- Screen bezel — recessed, with scanlines and vignette via CSS -->
+    <div id="bezel">
+      <div id="terminal">
+        <div id="output">
+          <div id="cursor-line"><span id="blink-cursor">_</span></div>
+        </div>
+
+        <div id="input-line">
+          <span id="prompt">&gt;&nbsp;</span>
+          <input
+            type="text"
+            id="input"
+            autocomplete="off"
+            autocorrect="off"
+            autocapitalize="off"
+            spellcheck="false"
+            aria-label="Terminal input"
+          >
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script src="locations.js"></script>
+  <script src="game.js"></script>
+</body>
+</html>

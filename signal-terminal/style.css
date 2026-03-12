@@ -331,6 +331,49 @@ body {
 }
 
 /* ============================================================
+   ENDING CARD
+   ============================================================ */
+
+/* Ending title — SIGNAL // RISING, [PEREGRINE-04: CONTAINED], etc. */
+.line.ending-title {
+  color: #ffffff;
+  text-align: center;
+  letter-spacing: 0.22em;
+  font-size: 1.1em;
+  text-shadow: 0 0 18px rgba(255, 255, 255, 0.2);
+  margin-top: 0.4em;
+}
+
+/* Ending tag — [IMPLANT BRIDGE: ESTABLISHED] etc. */
+.line.ending-tag {
+  color: #4EC9B0;
+  text-align: center;
+  letter-spacing: 0.18em;
+  font-size: 0.88em;
+  text-shadow: 0 0 10px rgba(78, 201, 176, 0.2);
+}
+
+/* Ending final line — lowercase, dim, centered */
+.line.ending-final {
+  color: #556677;
+  text-align: center;
+  font-size: 0.92em;
+  letter-spacing: 0.06em;
+  margin-top: 0.5em;
+}
+
+/* Ending final line — red variant. Only used once (E1).
+   Same red as terminal errors — the only time the game speaks in red outside error states. */
+.line.ending-final-red {
+  color: #FF4444;
+  text-align: center;
+  font-size: 0.92em;
+  letter-spacing: 0.06em;
+  margin-top: 0.5em;
+  text-shadow: 0 0 10px rgba(255, 68, 68, 0.35);
+}
+
+/* ============================================================
    RESPONSIVE — graceful collapse on narrow viewports
    ============================================================ */
 

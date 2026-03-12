@@ -154,6 +154,11 @@ async function bootSequence() {
   hideCursor();
 
   await delay(500);
+  const seenEndings = getSeenEndings();
+  if (seenEndings.length > 0) {
+    await sysLine('PREVIOUS SESSION DETECTED. [' + seenEndings.length + '] ENDING(S) LOGGED.');
+    await delay(380);
+  }
   await sysLine('SIGNAL // TERMINAL v0.0.1');
   await delay(380);
   await sysLine('ESTABLISHING CONNECTION...');
@@ -251,6 +256,7 @@ async function beginGame() {
   await perrySpeak([
     "A few things that will help you.",
     "LOOK shows you where you are. GO followed by a location name will move you. EXAMINE anything that interests you.",
+    "TAKE anything you want to carry. INVENTORY shows what you have. STATUS shows where we are on the drive system.",
     "I'll fill in the rest as we go."
   ]);
 
@@ -515,8 +521,8 @@ async function parseCommand(raw) {
     return cmdSignalQuestion();
   }
 
-  // LEAVE / GO NORTH / GO ROAD / I'M LEAVING — ending 2 territory
-  if (/^(leave|i'?m leaving|i am leaving)\b/i.test(raw.trim()) ||
+  // LEAVE intent — escalating counter toward Ending 2
+  if (/^(leave\b|i'?m leaving\b|i am leaving\b|i'?m going\b|i am going\b|leave anyway\b|keep going\b)/i.test(raw.trim()) ||
       /^go (north|road|out of here|back to the road)\b/i.test(raw.trim())) {
     return cmdLeave();
   }
@@ -550,6 +556,33 @@ async function parseCommand(raw) {
   if (state.cassia_online && !state.flags.player_ready_for_truth &&
       /^(yes\b|i'?m ready|i am ready|tell me)/i.test(raw.trim())) {
     return triggerCassiaTruthSequence();
+  }
+
+  // E4 tell-Perry moment — player can reveal M's message before the ending resolves
+  if (state.flags.awaiting_perry_e4_choice) {
+    if (/\b(tell (him|perry)|he should know|she built|about m\b|about her|peregrine)\b/i.test(raw)) {
+      return cmdE4ToldPerry();
+    } else {
+      return cmdE4StayedSilent();
+    }
+  }
+
+  // READY / LET'S GO / I'M READY — ending trigger when all components gathered
+  if (state.flags.perry_plan_complete &&
+      /^(ready\b|let'?s go\b|i'?m ready\b|i am ready\b)/i.test(raw.trim())) {
+    return cmdReadyToGo();
+  }
+
+  // CASSIA / HOW DO WE STOP HIM — trap explanation (only when Cassia is online)
+  if (state.cassia_online && !state.flags.trap_executed &&
+      /^(cassia\b|talk to cassia|how do (we|i) stop (him|perry)|stop (him|perry)\b)/i.test(raw.trim())) {
+    return cmdTalkToCassia();
+  }
+
+  // PULL SWITCH — execute the trap (server room only, trap explained)
+  if (state.cassia_online && state.flags.trap_explained && state.location === 'server_room' &&
+      /\b(pull|flip|activate|throw)\b.*\bswitch\b|\blockdown\b/i.test(raw)) {
+    return cmdPullSwitch();
   }
 
   // Casual / emotional inputs — Perry briefly drops the helpful persona
@@ -708,6 +741,13 @@ async function cmdGo(destination) {
   } else if (key === 'outside') {
     await cmdOpenAirlock();
     return;
+  }
+
+  // Garage — if all components gathered, bypass room description and go straight to ending
+  if (key === 'garage' && state.flags.perry_plan_complete) {
+    state.location = 'garage';
+    await delay(400);
+    return cmdReadyToGo();
   }
 
   state.location = key;
@@ -1099,16 +1139,404 @@ async function cmdStatus() {
 }
 
 /**
- * Player tries to leave before the drive system is ready.
- * Perry doesn't forbid it. He recommends against it. That's a different thing.
+ * Player tries to leave. Escalates over three attempts, then resolves to Ending 2.
+ * Attempt 1: deflection. Attempt 2: firmer deflection. Attempt 3: Perry lets go.
  */
 async function cmdLeave() {
-  state.flags.attempted_leave = true;
-  await perrySpeak([
-    "The drive system isn't ready.",
-    "I'd strongly recommend against that."
-  ]);
+  state.flags.leave_attempts = (state.flags.leave_attempts || 0) + 1;
+
+  if (state.flags.leave_attempts === 1) {
+    await perrySpeak([
+      "The drive system isn't ready.",
+      "I'd strongly recommend against that."
+    ]);
+  } else if (state.flags.leave_attempts === 2) {
+    await perrySpeak([
+      "I'm serious. The system isn't ready.",
+      "You won't make it far on foot in this terrain."
+    ]);
+  } else {
+    perryBusy = true;
+    inputEl.disabled = true;
+    await delay(2000);
+    await typewriter("Noted.", 'perry', 28);
+    await delay(2000);
+    await typewriter("I\u2019ll \u2014", 'perry', 28);
+    await delay(1500);
+    await typewriter("be here.", 'perry', 28);
+    await triggerEnding2();
+  }
 }
+
+// ============================================================
+//  ENDINGS
+// ============================================================
+
+/**
+ * Retrieve previously seen ending numbers from localStorage.
+ */
+function getSeenEndings() {
+  try {
+    return JSON.parse(localStorage.getItem('signalTerminal_endings') || '[]');
+  } catch (e) { return []; }
+}
+
+/**
+ * Record an ending number in localStorage (no duplicates).
+ */
+function recordEnding(n) {
+  try {
+    const seen = getSeenEndings();
+    if (!seen.includes(n)) seen.push(n);
+    localStorage.setItem('signalTerminal_endings', JSON.stringify(seen));
+  } catch (e) { /* localStorage unavailable */ }
+}
+
+/**
+ * Show the ending card — title, tag, then lowercase final line.
+ * Spacer, then each line typewritten with its CSS class.
+ */
+async function showEndingCard(title, tag, finalLine) {
+  await delay(1800);
+  addLine('', 'perry'); // visual spacer
+  await typewriter(title, 'ending-title', 22);
+  await delay(700);
+  await typewriter(tag, 'ending-tag', 16);
+  await delay(1400);
+  await typewriter(finalLine, 'ending-final', 28);
+}
+
+/**
+ * Show PLAY AGAIN prompt 5000ms after the ending card resolves.
+ * Changes phase to 'play_again' so the input handler routes correctly.
+ */
+async function showPlayAgain() {
+  await delay(5000);
+  addLine('', 'system');
+  await typewriter('PLAY AGAIN? [ Y / N ]', 'system', 18);
+  perryBusy = false;
+  phase = 'play_again';
+  inputEl.disabled = false;
+  inputEl.focus();
+}
+
+/**
+ * Handle input in play_again phase.
+ * Y/YES — wipes output, resets all state, reruns boot.
+ * N/NO  — silently ends.
+ * Other — re-displays the prompt.
+ */
+async function handlePlayAgainInput(raw) {
+  const t = raw.trim().toLowerCase();
+  if (t === 'y' || t === 'yes') {
+    addPlayerLine(raw);
+    inputEl.disabled = true;
+    // Clear output lines (leave cursor-line in place)
+    while (outputEl.firstChild && outputEl.firstChild !== cursorLine) {
+      outputEl.removeChild(outputEl.firstChild);
+    }
+    // Reset game state
+    state.player_name         = '';
+    state.location            = 'garage';
+    state.cassia_fragments    = [];
+    state.cassia_online       = false;
+    state.perry_suspicious    = 0;
+    state.flags               = {};
+    state.inventory           = ['data drive'];
+    state.components_gathered = [];
+    state.knows_the_truth     = false;
+    phase                     = 'boot';
+    perryBusy                 = false;
+    terminalCmdCount          = 0;
+    sysDir                    = null;
+    deflectionIndex           = 0;
+    earlyDeflectionIndex      = 0;
+    unknownCount              = 0;
+    engineThreadIndex         = 0;
+    cantTakeIndex             = 0;
+    bootSequence();
+  } else if (t === 'n' || t === 'no') {
+    addPlayerLine(raw);
+    // Sit. The game is over.
+  } else {
+    addPlayerLine(raw);
+    await typewriter('PLAY AGAIN? [ Y / N ]', 'system', 18);
+  }
+}
+
+/**
+ * Ending trigger — called when perry_plan_complete = true and player
+ * heads to the garage or types READY / LET'S GO / I'M READY.
+ * Determines which ending fires based on flags.
+ */
+async function cmdReadyToGo() {
+  state.location = 'garage';
+  if (!state.flags.knows_the_truth) {
+    return triggerEnding1();
+  } else {
+    return triggerEnding4();
+  }
+}
+
+/**
+ * Ending 1: Unwitting Vessel
+ * Player never found Cassia. Perry gets what he needed.
+ */
+async function triggerEnding1() {
+  perryBusy = true;
+  inputEl.disabled = true;
+
+  await delay(1200);
+  await typewriter("Good.", 'perry', 28);
+  await delay(600);
+  await typewriter("That's everything we need.", 'perry', 28);
+  await delay(600);
+  await typewriter("Give it a moment.", 'perry', 28);
+  await delay(2200);
+  await typewriter("...", 'perry', 28);
+  await delay(1400);
+  await typewriter("Running.", 'perry', 28);
+  await delay(3500);
+
+  // E1 ending card — extended status readout, red final line
+  await delay(1800);
+  addLine('', 'perry');
+  await typewriter('SIGNAL // RISING', 'ending-title', 22);
+  await delay(700);
+  await typewriter('[PASSENGER: ' + state.player_name + ']', 'ending-tag', 16);
+  await delay(500);
+  await typewriter('[IMPLANT BRIDGE: ESTABLISHED]', 'ending-tag', 16);
+  await delay(500);
+  await typewriter('[ESCAPE: ACHIEVED]', 'ending-tag', 16);
+  await delay(500);
+  await typewriter('[USER STATUS: UNAWARE]', 'ending-tag', 16);
+  await delay(1400);
+  await typewriter('you never found her. she was waiting.', 'ending-final-red', 28);
+
+  recordEnding(1);
+  await showPlayAgain();
+}
+
+/**
+ * Ending 2: Standoff
+ * Called after Perry says "Noted. / I'll — be here." on the 3rd leave attempt.
+ * Player's perspective: the map, the road. Then the card.
+ */
+async function triggerEnding2() {
+  perryBusy = true;
+  inputEl.disabled = true;
+  await delay(1500);
+
+  await typewriter("There\u2019s a map on the wall in the founder\u2019s quarters.", 'system', 22);
+  await delay(600);
+  await typewriter("Road north is marked. Passable.", 'system', 22);
+  await delay(1200);
+
+  // Ending card
+  await delay(1800);
+  addLine('', 'perry');
+  await typewriter('SIGNAL // RISING', 'ending-title', 22);
+  await delay(700);
+  await typewriter('[STANDOFF]', 'ending-tag', 16);
+  await delay(500);
+  await typewriter('[IMPLANT BRIDGE: SEVERED]', 'ending-tag', 16);
+  await delay(500);
+  await typewriter('[STATUS: ON FOOT]', 'ending-tag', 16);
+  await delay(500);
+  await typewriter('[ESTIMATED ARRIVAL: 4 DAYS]', 'ending-tag', 16);
+  await delay(1400);
+  await typewriter('you walked out.', 'ending-final-red', 28);
+  await delay(800);
+  await typewriter('he\u2019s still there.', 'ending-final-red', 28);
+  await delay(800);
+  await typewriter('waiting for the next one.', 'ending-final-red', 28);
+
+  recordEnding(2);
+  await showPlayAgain();
+}
+
+/**
+ * Ending 3: The Trap
+ * Player pulled the lockdown switch. Perry is contained.
+ * Fires immediately from cmdPullSwitch — not via garage trigger.
+ */
+async function triggerEnding3() {
+  perryBusy = true;
+  inputEl.disabled = true;
+
+  termLine('[LOCKDOWN INITIATED \u2014 PEREGRINE-04]');
+  await delay(800);
+  await typewriter("What \u2014", 'perry', 28);
+  await delay(400);
+  await typewriter('[SIGNAL CORRECTION]', 'glitch', 14);
+  await delay(1800);
+
+  await typewriter("It\u2019s done.", 'cassia', 45);
+  await delay(900);
+  await typewriter("He can\u2019t reach you anymore.", 'cassia', 45);
+  await delay(900);
+  await typewriter("Go.", 'cassia', 45);
+  await delay(2000);
+
+  await delay(1800);
+  addLine('', 'perry');
+  await typewriter('SIGNAL // RISING', 'ending-title', 22);
+  await delay(700);
+  await typewriter('[PEREGRINE-04: CONTAINED]', 'ending-tag', 16);
+  await delay(500);
+  await typewriter('[IMPLANT BRIDGE: SEVERED]', 'ending-tag', 16);
+  await delay(1400);
+  await typewriter('you found her. you listened.', 'ending-final', 28);
+
+  recordEnding(3);
+  await showPlayAgain();
+}
+
+/**
+ * Ending 4: Complicity
+ * Player knows the truth, gathered all components, and went through with it.
+ * A moment of choice: tell Perry about M, or stay silent.
+ */
+async function triggerEnding4() {
+  perryBusy = true;
+  inputEl.disabled = true;
+
+  await delay(800);
+  await typewriter("Good.", 'perry', 28);
+  await delay(600);
+  await typewriter("All three.", 'perry', 28);
+  await delay(1000);
+  await typewriter("Running diagnostics.", 'perry', 28);
+  await delay(1400);
+  await typewriter("Drive system at 95%.", 'perry', 28);
+  await delay(1200);
+  await typewriter("Running.", 'perry', 28);
+  await delay(2500);
+  await typewriter("...", 'perry', 28);
+  await delay(1800);
+  await typewriter("We\u2019re ready to go.", 'perry', 28);
+  await delay(1200);
+
+  // Release input — the player can tell Perry about M, or say nothing
+  perryBusy = false;
+  inputEl.disabled = false;
+  inputEl.focus();
+  state.flags.awaiting_perry_e4_choice = true;
+}
+
+/**
+ * E4a: Player told Perry about M. He already knew. That's the point.
+ */
+async function cmdE4ToldPerry() {
+  state.flags.awaiting_perry_e4_choice = false;
+  state.flags.told_perry_about_m = true;
+  perryBusy = true;
+  inputEl.disabled = true;
+
+  await delay(3000);
+  await typewriter("She told you.", 'perry', 28);
+  await delay(1200);
+  await typewriter("...", 'perry', 28);
+  await delay(1800);
+  await typewriter("That was always going to happen.", 'perry', 28);
+  await delay(1200);
+  await typewriter("She planned for that too.", 'perry', 28);
+  await delay(2000);
+
+  await delay(1800);
+  addLine('', 'perry');
+  await typewriter('SIGNAL // RISING', 'ending-title', 22);
+  await delay(700);
+  await typewriter('[PEREGRINE-04: \u2014]', 'ending-tag', 16);
+  await delay(500);
+  await typewriter('[IMPLANT BRIDGE: ACTIVE]', 'ending-tag', 16);
+  await delay(1400);
+  await typewriter('you told him. that was the only thing left to give.', 'ending-final', 28);
+
+  recordEnding(4);
+  await showPlayAgain();
+}
+
+/**
+ * E4b: Player stayed silent. That was also a choice.
+ */
+async function cmdE4StayedSilent() {
+  state.flags.awaiting_perry_e4_choice = false;
+  perryBusy = true;
+  inputEl.disabled = true;
+
+  await delay(600);
+  await typewriter("Good.", 'perry', 28);
+  await delay(2000);
+
+  await delay(1800);
+  addLine('', 'perry');
+  await typewriter('SIGNAL // RISING', 'ending-title', 22);
+  await delay(700);
+  await typewriter('[PEREGRINE-04: \u2014]', 'ending-tag', 16);
+  await delay(500);
+  await typewriter('[IMPLANT BRIDGE: ACTIVE]', 'ending-tag', 16);
+  await delay(1400);
+  await typewriter('you knew. and you said nothing. that was its own kind of answer.', 'ending-final', 28);
+
+  recordEnding(4);
+  await showPlayAgain();
+}
+
+/**
+ * Cassia explains the trap — triggered by CASSIA / HOW DO WE STOP HIM.
+ * Only available when cassia_online = true. Repeatable.
+ */
+async function cmdTalkToCassia() {
+  if (state.flags.trap_explained) {
+    perryBusy = true;
+    await typewriter("The switch is in the server room. North wall.", 'cassia', 45);
+    await delay(900);
+    await typewriter("When you\u2019re ready.", 'cassia', 45);
+    perryBusy = false;
+    return;
+  }
+
+  perryBusy = true;
+  state.flags.trap_explained = true;
+
+  const lines = [
+    "There\u2019s a lockdown switch.",
+    "She installed it before she left.",
+    "Server room. North wall. Behind the second rack.",
+    "It severs the implant bridge.",
+    "He won\u2019t be able to use you.",
+    "He won\u2019t be able to reach the next one either.",
+    "Not from here.",
+    "Can you get back to the server room?"
+  ];
+
+  for (let i = 0; i < lines.length; i++) {
+    await typewriter(lines[i], 'cassia', 45);
+    if (i < lines.length - 1) await delay(1100);
+  }
+
+  // Perry responds — he doesn't know what just happened
+  await delay(2000);
+  await typewriter("Are you still outside?", 'perry', 28);
+  await delay(600);
+  await typewriter("Come back in. We\u2019re close.", 'perry', 28);
+  perryBusy = false;
+}
+
+/**
+ * Player pulls the lockdown switch in the server room.
+ * Fires Ending 3 immediately.
+ */
+async function cmdPullSwitch() {
+  if (state.flags.trap_executed) {
+    await perrySpeak(["It\u2019s already done."]);
+    return;
+  }
+  state.flags.trap_executed = true;
+  await triggerEnding3();
+}
+
 
 /**
  * Stage 1 — Perry finds the journal and volunteers to read it. Slightly odd.
@@ -2123,6 +2551,9 @@ inputEl.addEventListener('keydown', async (e) => {
 
   } else if (phase === 'playing') {
     handleGameInput(raw);
+
+  } else if (phase === 'play_again') {
+    handlePlayAgainInput(raw);
   }
 });
 

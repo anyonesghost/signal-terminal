@@ -237,6 +237,22 @@ body {
   top: 0;
 }
 
+/* Unix terminal output — phosphor green, instant render, no typewriter delay.
+   Contrast with Perry's measured timed responses makes his reactions feel like catching up. */
+.line.terminal {
+  color: #3DFF6E;
+  text-shadow: 0 0 8px rgba(61, 255, 110, 0.2);
+}
+
+/* Terminal error — PERMISSION DENIED, CONNECTION INTERRUPTED.
+   Red is unused everywhere else in the palette. That's intentional. */
+.line.terminal-error {
+  color: #FF4444;
+  text-shadow: 0 0 10px rgba(255, 68, 68, 0.4);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
 /* Founder's recorded message — centered, deeper amber, no channel marker.
    Feels like reading someone else's mail. Because it is. */
 .line.founder {

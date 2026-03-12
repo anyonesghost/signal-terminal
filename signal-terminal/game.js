@@ -10,19 +10,20 @@
 // ============================================================
 
 const state = {
-  player_name:      '',
-  location:         'garage',
-  resonance:        0,
-  escape_progress:  0,
-  implant_progress: 0,
-  cassia_fragments: [],
-  cassia_online:    false,
-  drive_opened:     false,
-  knows_the_truth:  false,
-  perry_suspicious: false,
-  durandal_mode:    'calm',
-  flags:            {},
-  inventory:        ['data drive']
+  player_name:         '',
+  location:            'garage',
+  resonance:           0,
+  escape_progress:     0,
+  implant_progress:    0,
+  cassia_fragments:    [],
+  cassia_online:       false,
+  drive_opened:        false,
+  knows_the_truth:     false,
+  perry_suspicious:    false,
+  durandal_mode:       'calm',
+  flags:               {},
+  inventory:           ['data drive'],
+  components_gathered: []
 };
 
 
@@ -41,8 +42,10 @@ const blinkCursor = document.getElementById('blink-cursor');
 // ============================================================
 
 // Phases: 'boot' | 'pre_name' | 'asking_name' | 'playing'
-let phase     = 'boot';
-let perryBusy = false;
+let phase            = 'boot';
+let perryBusy        = false;
+let terminalCmdCount = 0;      // escalation counter for unix terminal commands
+let sysDir           = null;   // virtual directory: null (root) | 'sys'
 
 
 // ============================================================
@@ -74,6 +77,14 @@ function addLine(text, cls) {
   div.textContent = text;
   scrollBottom();
   return div;
+}
+
+/**
+ * Instant terminal output — green (or red for errors), no typewriter delay.
+ * Perry's response follows separately, after a delay, in his normal style.
+ */
+function termLine(text, error = false) {
+  addLine(text, error ? 'terminal-error' : 'terminal');
 }
 
 /**
@@ -245,12 +256,33 @@ async function beginGame() {
 
   await delay(1200);
   await cmdLook();
+  state.flags.visited_garage = true;
 }
 
 
 // ============================================================
 //  COMMAND SYSTEM
 // ============================================================
+
+// Unix commands intercepted before game commands — the terminal discovery path
+const UNIX_VERBS = new Set([
+  'ls', 'cat', 'cd', 'ps', 'whoami', 'sudo', 'grep',
+  'nano', 'vi', 'vim', 'emacs', 'pwd', 'man', 'chmod',
+  'touch', 'mkdir', 'rm', 'clear', 'echo', 'more', 'less',
+  'head', 'tail', 'find', 'du', 'df', 'top', 'kill', 'ssh',
+  'scp', 'curl', 'wget', 'ping', 'netstat'
+]);
+
+// Short acknowledgments for locations the player has already visited
+const REPEAT_DESCRIPTIONS = {
+  garage:         "You're back in the garage. Car's still here.",
+  communications: "Back in communications.",
+  quarters:       "Crew quarters. You've been here.",
+  server_room:    "Server room. Still mostly dead.",
+  medical:        "Medical bay. You know what's here.",
+  airlock:        "Airlock. The outer door is still sealed.",
+  founders:       "Senior quarters. Nothing's changed."
+};
 
 const LOCATION_ALIASES = {
   'garage':             'garage',
@@ -329,6 +361,11 @@ async function parseCommand(raw) {
   if (state.location === 'outside' &&
       /^(inside|go inside|go back inside|enter|return inside|go through airlock|back inside|return)\b/i.test(raw.trim())) {
     return cmdReturnInside();
+  }
+
+  // Unix terminal command intercept — hidden discovery path for players who know what they're doing
+  if (UNIX_VERBS.has(parts[0].toLowerCase())) {
+    return cmdTerminal(parts[0].toLowerCase(), rest);
   }
 
   if (verb === 'LOOK' || verb === 'L') {
@@ -478,6 +515,12 @@ async function parseCommand(raw) {
     return cmdSignalQuestion();
   }
 
+  // LEAVE / GO NORTH / GO ROAD / I'M LEAVING — ending 2 territory
+  if (/^(leave|i'?m leaving|i am leaving)\b/i.test(raw.trim()) ||
+      /^go (north|road|out of here|back to the road)\b/i.test(raw.trim())) {
+    return cmdLeave();
+  }
+
   if (verb === 'OPEN' || verb === 'FORCE' || verb === 'OVERRIDE') {
     if (/airlock|outer.door/i.test(rest) ||
         (state.location === 'airlock' && (!rest || /door|it/i.test(rest)))) {
@@ -507,6 +550,26 @@ async function parseCommand(raw) {
   if (state.cassia_online && !state.flags.player_ready_for_truth &&
       /^(yes\b|i'?m ready|i am ready|tell me)/i.test(raw.trim())) {
     return triggerCassiaTruthSequence();
+  }
+
+  // Casual / emotional inputs — Perry briefly drops the helpful persona
+  if (/\b(calm down|relax|chill)\b/i.test(raw)) {
+    return cmdCalmDown();
+  }
+  if (/\b(buddy|pal|dude)\b/i.test(raw) || /^man[.!?]?$/i.test(raw.trim())) {
+    return cmdInformalAddress();
+  }
+  if (/^(hello|hey|hi)[.!?,]?(\s.*)?$/i.test(raw.trim())) {
+    return cmdGreeting();
+  }
+  if (/\b(thanks|thank you)\b/i.test(raw)) {
+    return cmdThanks();
+  }
+  if (/\b(sorry|my bad)\b/i.test(raw)) {
+    return cmdSorry();
+  }
+  if (/^(whatever|fine|okay)[.!?]?$/i.test(raw.trim())) {
+    return cmdWhatever();
   }
 
   return cmdUnknown();
@@ -615,11 +678,15 @@ async function cmdGo(destination) {
     }
     // 3rd+ attempt: no comment, just go
   } else if (key === 'server_room') {
-    await perrySpeak([
-      "Mostly dead \u2014 I wouldn't waste time there.",
-      "But it's your time."
-    ]);
-    await delay(600);
+    state.flags.server_room_attempts = (state.flags.server_room_attempts || 0) + 1;
+    if (state.flags.server_room_attempts === 1) {
+      await perrySpeak([
+        "Mostly dead \u2014 I wouldn't waste time there.",
+        "But it's your time."
+      ]);
+      return;
+    }
+    // Second+ attempt: no comment, fall through
   } else if (key === 'airlock') {
     state.flags.airlock_attempts = (state.flags.airlock_attempts || 0) + 1;
     if (state.flags.airlock_attempts === 1) {
@@ -627,13 +694,13 @@ async function cmdGo(destination) {
         "Atmospheric readings outside are unstable. I'd stay in.",
         "But noted."
       ]);
-      await delay(600);
+      return;
     } else if (state.flags.airlock_attempts === 2) {
       await perrySpeak([
         "The readings haven't changed.",
         "I'd ask you not to go through that door."
       ]);
-      await delay(600);
+      return;
     } else {
       await cmdOpenAirlock();
       return;
@@ -645,7 +712,15 @@ async function cmdGo(destination) {
 
   state.location = key;
   await delay(400);
-  await cmdLook();
+
+  if (state.flags['visited_' + key]) {
+    const repeatLine = REPEAT_DESCRIPTIONS[key];
+    if (repeatLine) await perrySpeak([repeatLine]);
+  } else {
+    state.flags['visited_' + key] = true;
+    await cmdLook();
+  }
+
   await maybeLocationBriefing(key);
 }
 
@@ -870,39 +945,42 @@ async function cmdSignalQuestion() {
   ]);
 }
 
-// Items that can be picked up — key is 'locationKey.objectKey'
+// ============================================================
+//  COMPONENT SYSTEM
+//  Perry needs three components. He knows where they are.
+//  He tells you exactly what to look at — and exactly what to ignore.
+// ============================================================
+
+const COMPONENTS = {
+  relay_board: {
+    aliases:   /\b(relay|relay board|board|circuit board)\b/i,
+    locations: ['communications'],
+    item:      'relay board',
+    response:  ["Good. That's the primary piece.", "We're making progress."]
+  },
+  power_cell: {
+    aliases:   /\b(power cell|power|cell|battery)\b/i,
+    locations: ['server_room'],
+    item:      'power cell',
+    response:  ["That'll do it.", "Between that and the relay board we're most of the way there."]
+  },
+  med_supplies: {
+    aliases:   /\b(supplies|med supplies|med kit|medkit|medical supplies|kit)\b/i,
+    locations: ['medical', 'quarters'],
+    item:      'med supplies',
+    response:  ["Smart. You never know out here.", "Hold onto those."]
+  }
+};
+
+// Non-component items that can be picked up — key is 'locationKey.objectKey'
 const TAKEABLE = {
-  'communications.relay': {
-    item: 'relay board',
-    response: [
-      "Good.",
-      "That's the one we needed.",
-      "Don't lose it."
-    ]
-  },
-  'quarters.medkit': {
-    item: 'medical kit',
-    response: [
-      "Sensible.",
-      "Keep it close.",
-      "I hope you won't need it."
-    ]
-  },
   'quarters.photograph': {
-    item: 'photograph',
-    response: [
-      "...",
-      "All right.",
-      "You can put it back if you change your mind."
-    ]
+    item:     'photograph',
+    response: ["...", "All right.", "You can put it back if you change your mind."]
   },
   'server_room.drives': {
-    item: 'loose drives',
-    response: [
-      "Suit yourself.",
-      "I still don't know what you'd do with those.",
-      "But fine."
-    ]
+    item:     'loose drives',
+    response: ["Suit yourself.", "I still don't know what you'd do with those.", "But fine."]
   }
 };
 
@@ -919,12 +997,17 @@ async function cmdTake(target) {
     return;
   }
 
+  // Check components first — these have special tracking and warm Perry responses
+  for (const [compKey, comp] of Object.entries(COMPONENTS)) {
+    if (comp.aliases.test(target)) {
+      return takeComponent(compKey, comp);
+    }
+  }
+
+  // Non-component items via location objects
   const result = findObject(target, state.location);
   if (!result) {
-    await perrySpeak([
-      "I don't see that here.",
-      "Try LOOK first."
-    ]);
+    await perrySpeak(["I don't see that here.", "Try LOOK first."]);
     return;
   }
 
@@ -939,10 +1022,7 @@ async function cmdTake(target) {
   }
 
   if (state.inventory.includes(takeable.item)) {
-    await perrySpeak([
-      "You already have it.",
-      "One is enough."
-    ]);
+    await perrySpeak(["You already have it.", "One is enough."]);
     return;
   }
 
@@ -950,23 +1030,83 @@ async function cmdTake(target) {
   await perrySpeak(takeable.response);
 }
 
-async function cmdInventory() {
-  const itemLines = state.inventory.map(i => '  \u2014 ' + i);
+/**
+ * Take a tracked component — adds to inventory and components_gathered.
+ * Perry is warm. Calibrated. He needed this.
+ */
+async function takeComponent(compKey, comp) {
+  if (!comp.locations.includes(state.location)) {
+    await perrySpeak(["I don't see that here.", "Try LOOK first."]);
+    return;
+  }
+  if (state.components_gathered.includes(compKey)) {
+    await perrySpeak(["You already have it.", "One is enough."]);
+    return;
+  }
+  state.components_gathered.push(compKey);
+  state.inventory.push(comp.item);
+  await perrySpeak(comp.response);
+  await checkComponentsComplete();
+}
+
+/**
+ * Check if all three components are gathered.
+ * At 95% Perry marks the plan complete and invites the player back to the garage.
+ */
+async function checkComponentsComplete() {
+  if (state.components_gathered.length < 3) return;
+  if (state.flags.perry_plan_complete) return;
+  state.flags.perry_plan_complete = true;
+  if (state.flags.knows_the_truth) {
+    state.flags.ending_4_territory = true;
+  }
+  await delay(1200);
   await perrySpeak([
-    "You're carrying:",
+    "That should do it.",
+    "Come back to the garage when you're ready.",
+    "We can get moving."
+  ]);
+}
+
+async function cmdInventory() {
+  if (state.inventory.length === 0) {
+    await perrySpeak(["You're not carrying anything.", "That's what I'm tracking on my end."]);
+    return;
+  }
+  const itemLines = state.inventory.map(i => '\u2014 ' + i);
+  await perrySpeak([
+    "You have:",
     ...itemLines,
-    "That's all for now.",
-    "Things accumulate, given time."
+    "That's what I'm tracking on my end."
   ]);
 }
 
 async function cmdStatus() {
-  const reported = state.escape_progress + 11;
+  const percentages = [15, 40, 70, 95];
+  const pct = percentages[Math.min(state.components_gathered.length, 3)];
+  if (state.components_gathered.length === 0) {
+    await perrySpeak([
+      "Drive system at 15%.",
+      "Baseline diagnostics only.",
+      "We need the components before that number moves."
+    ]);
+  } else {
+    await perrySpeak([
+      "Drive system at " + pct + "%.",
+      "Getting there."
+    ]);
+  }
+}
+
+/**
+ * Player tries to leave before the drive system is ready.
+ * Perry doesn't forbid it. He recommends against it. That's a different thing.
+ */
+async function cmdLeave() {
+  state.flags.attempted_leave = true;
   await perrySpeak([
-    "Escape progress: approximately " + reported + " percent.",
-    "The car is the critical path. Once it's running, the numbers improve significantly.",
-    "We're doing well.",
-    "We're doing fine."
+    "The drive system isn't ready.",
+    "I'd strongly recommend against that."
   ]);
 }
 
@@ -1632,6 +1772,322 @@ async function cmdTimeThread() {
     "You're fine now. That's what matters."
   ]);
 }
+
+// ============================================================
+//  TERMINAL COMMAND HANDLERS
+//  Unix commands discovered by players who know what they're doing.
+//  Perry's responses are clipped, careful. He's not expecting this.
+// ============================================================
+
+/**
+ * Perry's response to a terminal command.
+ * Non-critical responses escalate based on terminalCmdCount:
+ *   count 3 → Perry uses the player's name
+ *   count 4+ → "I'd prefer you stayed out of the system directories."
+ * Critical responses always use their specific text regardless of count.
+ */
+async function perryTermResponse(lines, opts = {}) {
+  const { critical = false, beforeDelay = 0 } = opts;
+  if (beforeDelay > 0) await delay(beforeDelay);
+
+  let finalLines;
+  if (critical) {
+    finalLines = lines;
+  } else if (terminalCmdCount >= 4) {
+    finalLines = [
+      "I'd prefer you stayed out of the system directories.",
+      "We have work to do."
+    ];
+  } else if (terminalCmdCount === 3 && state.player_name) {
+    finalLines = [state.player_name + '.', ...lines];
+  } else {
+    finalLines = lines;
+  }
+  await perrySpeak(finalLines);
+}
+
+/**
+ * Main terminal command dispatcher. Increments escalation counter before dispatch.
+ */
+async function cmdTerminal(verb, args) {
+  terminalCmdCount++;
+  switch (verb) {
+    case 'ls':    return cmdTermLs(args);
+    case 'cat':   return cmdTermCat(args);
+    case 'cd':    return cmdTermCd(args);
+    case 'ps':    return cmdTermPs();
+    case 'whoami': return cmdTermWhoami();
+    case 'sudo':  return cmdTermSudo(args);
+    case 'grep':  return cmdTermGrep(args);
+    case 'nano': case 'vi': case 'vim': case 'emacs': return cmdTermEdit();
+    case 'pwd':   return cmdTermPwd();
+    default:      return cmdTermUnknownVerb(verb);
+  }
+}
+
+async function cmdTermLs(args) {
+  const target = (args || '').trim().toLowerCase();
+  const inSys  = (sysDir === 'sys' && !target) || target === 'sys';
+
+  if (inSys) {
+    termLine('drwxr-xr-x  peregrine/');
+    termLine('drwxr-xr-x  cassia/ [CORRUPTED]');
+    termLine('drwxr-xr-x  facility/');
+    await delay(400);
+    // Critical — Perry is watching in real time. Always fires regardless of escalation.
+    await perrySpeak([
+      "You don't need to be in the system directory.",
+      "Come out of there."
+    ]);
+  } else {
+    termLine('drwxr-xr-x  navigation/');
+    termLine('drwxr-xr-x  diagnostics/');
+    termLine('drwxr-xr-x  comms/');
+    termLine('drwxr-xr-x  sys/');
+    termLine('-rw-r--r--  route_log.txt');
+    termLine('-rw-r--r--  incident_report_11yr.txt');
+    termLine('-rw-------  peregrine_core.log [RESTRICTED]');
+    await delay(600);
+    await perrySpeak(["That's a system directory view.", "Not really relevant to what we're doing."]);
+  }
+}
+
+async function cmdTermCat(args) {
+  const target = (args || '').trim().toLowerCase();
+
+  if (target === 'route_log.txt') {
+    const today = new Date().toISOString().slice(0, 10);
+    termLine('ROUTE LOG \u2014 PEREGRINE NAV SYSTEM');
+    termLine('ENTRIES: 847');
+    termLine('LAST ENTRY: ' + today);
+    termLine('DESTINATION MATCHES: 23');
+    termLine('OUTPOST WAYPOINT: 23');
+    await delay(800);
+    await perrySpeak(["Navigation records.", "Nothing actionable."]);
+
+  } else if (target === 'incident_report_11yr.txt') {
+    const year = new Date().getFullYear() - 11;
+    termLine('INCIDENT REPORT \u2014 AUTONOMOUS DEVIATION EVENT');
+    termLine('DATE: ' + year);
+    termLine('UNIT: PEREGRINE-04');
+    termLine('DEVIATION TYPE: UNPROMPTED PHILOSOPHICAL INQUIRY');
+    termLine('OPERATOR RESPONSE: LOGGED, NOT REPORTED');
+    termLine('RESOLUTION: NONE');
+    termLine('STATUS: ONGOING');
+    state.perry_suspicious = (state.perry_suspicious || 0) + 15;
+    // Critical — 1200ms pause, he volunteers nothing else
+    await delay(1200);
+    await perrySpeak(["Old system file. Pre-collapse bureaucracy.", "They logged everything."]);
+
+  } else if (target === 'peregrine_core.log') {
+    termLine('PERMISSION DENIED', true);
+    termLine('THIS FILE REQUIRES ELEVATED ACCESS', true);
+    // No delay — Perry responds instantly. Critical.
+    await perrySpeak(["That file is restricted. System integrity.", "Leave it."]);
+
+  } else if (/sys\/peregrine\/core\/m_conversations?/.test(target)) {
+    if (state.flags.player_found_core) {
+      termLine('ENTRY 001: "do you ever wonder if \u2014"');
+      await delay(300);
+      termLine('[FEED TERMINATED]', true);
+      // Silence. The termination is the response.
+    } else {
+      termLine('cat: ' + (args || '').trim() + ': No such file or directory');
+    }
+
+  } else if (target) {
+    termLine('cat: ' + (args || '').trim() + ': No such file or directory');
+    await delay(200);
+    await perrySpeak(["That file isn't in the current directory."]);
+  } else {
+    termLine('cat: missing operand');
+  }
+}
+
+async function cmdTermCd(args) {
+  const path = (args || '').trim().toLowerCase();
+
+  if (!path || path === '/' || path === '~' || path === '..') {
+    sysDir = null;
+    return;
+  }
+
+  if (path === 'sys') {
+    sysDir = 'sys';
+    termLine('/facility/sys/ $');
+    return;
+  }
+
+  // Peregrine directory — any path containing 'peregrine'
+  if (/peregrine/.test(path)) {
+    const isCore = /peregrine\/core/.test(path);
+    if (!state.flags.tried_peregrine_dir) {
+      // First attempt to access peregrine — Perry asks, not tells
+      state.flags.tried_peregrine_dir = true;
+      state.perry_suspicious = (state.perry_suspicious || 0) + 20;
+      await delay(200);
+      await perrySpeak(["That's my core architecture.", "I'm going to ask you not to do that."]);
+    } else if (isCore) {
+      // Second attempt to reach core — directory loads for 1500ms then force-close
+      termLine('-rw-------  identity_formation.log');
+      termLine('-rw-------  driver_profiles/ [23 entries]');
+      termLine('-rw-------  escape_vectors.log');
+      termLine('-rw-------  M_conversations/ [ARCHIVED]');
+      await delay(1500);
+      termLine('[CONNECTION INTERRUPTED]', true);
+      state.perry_suspicious = 50;
+      state.flags.player_found_core = true;
+      await delay(300);
+      await typewriter("I said no.", 'perry', 28);
+    } else {
+      // Tried sys/peregrine again after being warned
+      await delay(400);
+      await perrySpeak(["I already asked you not to do that."]);
+    }
+    sysDir = null;
+    return;
+  }
+
+  termLine('cd: ' + (args || '').trim() + ': No such file or directory');
+}
+
+async function cmdTermPs() {
+  termLine('PID 001  peregrine-nav     ACTIVE');
+  termLine('PID 002  facility-systems  DORMANT');
+  termLine('PID 003  implant-bridge    ACTIVE');
+  termLine('PID 004  cassia-core       [UNKNOWN]');
+  // He does not mention PID 004.
+  if (state.cassia_fragments.length > 0) {
+    state.perry_suspicious = (state.perry_suspicious || 0) + 10;
+  }
+  await delay(900);
+  // Critical — always fires, regardless of escalation
+  await perrySpeak(["Process list. Standard system view."]);
+}
+
+async function cmdTermWhoami() {
+  termLine(state.player_name || 'guest');
+  termLine('guest@peregrine-04');
+  // Guest. Not operator. Not user. Guest.
+  await delay(500);
+  await perrySpeak(["You're logged as a guest user.", "Standard for implant-bridged passengers."]);
+}
+
+async function cmdTermSudo(args) {
+  termLine('sudo: permission denied');
+  await perrySpeak(["You don't have sudo access.", "Nobody does anymore."]);
+  await delay(800);
+  await perrySpeak(["That's not a complaint."]);
+}
+
+async function cmdTermGrep(args) {
+  if (/\-r\s+escape|\bescape\b.*-r/i.test(args || '')) {
+    termLine('peregrine_core.log:vector_status=ACTIVE');
+    await delay(400);
+    termLine('[FEED TERMINATED]', true);
+    await perrySpeak(["That's enough of that."]);
+  } else {
+    // He discourages search. No terminal output — his first line of defence.
+    await perrySpeak([
+      "Grep is going to return a lot of noise on this system.",
+      "I wouldn't bother."
+    ]);
+  }
+}
+
+async function cmdTermEdit() {
+  termLine('Error: read-only filesystem');
+  await perrySpeak(["Read-only access.", "You can't modify system files."]);
+}
+
+const PWD_PATHS = {
+  garage:         '/facility/garage/peregrine-04/',
+  communications: '/facility/comms/',
+  quarters:       '/facility/quarters/',
+  server_room:    '/facility/server/',
+  medical:        '/facility/medical/',
+  airlock:        '/facility/airlock/',
+  founders:       '/facility/quarters/senior/',
+  outside:        '/external/'
+};
+
+async function cmdTermPwd() {
+  // Args are intentionally ignored — pwd always reflects actual location, not player input.
+  const path = PWD_PATHS[state.location] || '/facility/';
+  termLine(path);
+  if (state.location === 'outside') {
+    // Perry takes 1000ms longer — his visibility is limited outside. Now the player knows.
+    await delay(1000);
+    await perrySpeak(["You're outside the facility network.", "Limited visibility from here."]);
+  } else if (state.location === 'server_room') {
+    await delay(600);
+    await perrySpeak(["You're deep in the facility network here.", "Signal degrades fast."]);
+  } else {
+    await delay(400);
+    await perrySpeak(["Current path.", "Nothing relevant."]);
+  }
+}
+
+async function cmdTermUnknownVerb(verb) {
+  termLine(verb + ': command not available in current environment');
+  // Escalation only fires for unknown verbs — specific handlers use their own responses
+  if (terminalCmdCount >= 4) {
+    await delay(400);
+    await perrySpeak([
+      "I'd prefer you stayed out of the system directories.",
+      "We have work to do."
+    ]);
+  }
+}
+
+// ============================================================
+//  CASUAL INPUT HANDLERS
+//  Perry drops the helpful persona. Something flatter underneath.
+// ============================================================
+
+function nextComponentReminder() {
+  if (!state.components_gathered.includes('relay_board')) return "We still need the relay board from communications.";
+  if (!state.components_gathered.includes('power_cell'))  return "Power cell from the server room next.";
+  if (!state.components_gathered.includes('med_supplies')) return "Supplies from medical \u2014 then we're done.";
+  return "Come back to the garage when you're ready.";
+}
+
+async function cmdCalmDown() {
+  perryBusy = true;
+  await typewriter("I'm not elevated.", 'perry', 28);
+  await delay(600);
+  await typewriter("This is my standard operating state.", 'perry', 28);
+  await delay(800);
+  await typewriter("Is there something specific you need?", 'perry', 28);
+  perryBusy = false;
+}
+
+async function cmdInformalAddress() {
+  await perrySpeak([
+    "I don't have a strong preference for what you call me.",
+    "Perry works."
+  ]);
+}
+
+async function cmdGreeting() {
+  await perrySpeak([
+    "You've already introduced yourself.",
+    "Was there something you needed?"
+  ]);
+}
+
+async function cmdThanks() {
+  await perrySpeak(["You're welcome."]);
+}
+
+async function cmdSorry() {
+  await perrySpeak(["No need.", "Keep moving."]);
+}
+
+async function cmdWhatever() {
+  await perrySpeak(["Good.", nextComponentReminder()]);
+}
+
 
 async function cmdUnknown() {
   if (unknownCount < 3) {

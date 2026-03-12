@@ -160,6 +160,11 @@ const LOCATIONS = {
         "...",
         "I don't have credentials for this system."
       ],
+      power_cell: [
+        "A portable power cell. Still showing charge.",
+        "Older format, but compatible.",
+        "This is useful."
+      ],
       drives: [
         "A few loose drives scattered on the floor.",
         "They're not formatted for anything I can read.",
@@ -210,6 +215,11 @@ const LOCATIONS = {
         "Locked. The lock is mechanical, not electronic.",
         "I can't open it for you.",
         "You might find another way."
+      ],
+      supplies: [
+        "Loose supplies on the counter. Sealed packaging.",
+        "Bandages, analgesics, a field dressing kit.",
+        "Worth taking."
       ],
       diagnostic: [
         "A biological diagnostic unit \u2014 biomarkers, neural activity, implant status.",

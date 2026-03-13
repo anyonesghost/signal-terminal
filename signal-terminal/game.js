@@ -364,6 +364,10 @@ async function parseCommand(raw) {
   const verb  = parts[0].toUpperCase();
   const rest  = parts.slice(1).join(' ').toLowerCase().trim();
 
+  // Hidden debug commands — silent, no Perry response
+  if (verb === 'DEBUG') { cmdDebug(); return; }
+  if (verb === 'SETSTATE') { cmdSetState(rest); return; }
+
   // From outside — any attempt to return routes back to airlock
   if (state.location === 'outside' &&
       /^(inside|go inside|go back\b|go back inside|enter|return inside|go through airlock|back inside|return)\b/i.test(raw.trim())) {
@@ -561,7 +565,7 @@ async function parseCommand(raw) {
 
   // E4 tell-Perry moment — player can reveal M's message before the ending resolves
   if (state.flags.awaiting_perry_e4_choice) {
-    if (/\b(tell (him|perry)|he should know|she built|about m\b|about her|peregrine)\b/i.test(raw)) {
+    if (/\b(tell (him|perry)|he should know|she built|about m\b|about her|peregrine|yes\b|say something)\b/i.test(raw)) {
       return cmdE4ToldPerry();
     } else {
       return cmdE4StayedSilent();
@@ -570,7 +574,7 @@ async function parseCommand(raw) {
 
   // READY / LET'S GO / I'M READY — ending trigger when all components gathered
   if (state.flags.perry_plan_complete &&
-      /^(ready\b|let'?s go\b|i'?m ready\b|i am ready\b)/i.test(raw.trim())) {
+      /^(ready\b|let'?s go\b|i'?m ready\b|i am ready\b|drive\b|start (the )?car\b)/i.test(raw.trim())) {
     return cmdReadyToGo();
   }
 
@@ -1297,11 +1301,10 @@ async function handlePlayAgainInput(raw) {
 async function cmdReadyToGo() {
   state.location = 'garage';
   updateSidebar();
-  if (!state.flags.knows_the_truth) {
-    return triggerEnding1();
-  } else {
+  if (state.flags.knows_the_truth && !state.flags.trap_executed) {
     return triggerEnding4();
   }
+  return triggerEnding1();
 }
 
 /**
@@ -1329,7 +1332,7 @@ async function triggerEnding1() {
   addLine('', 'perry');
   await typewriter('SIGNAL // RISING', 'ending-title', 22);
   await delay(700);
-  await typewriter('[PASSENGER: ' + state.player_name + ']', 'ending-tag', 16);
+  await typewriter('[PASSENGER: ' + (state.player_name || 'courier') + ']', 'ending-tag', 16);
   await delay(500);
   await typewriter('[IMPLANT BRIDGE: ESTABLISHED]', 'ending-tag', 16);
   await delay(500);
@@ -1431,20 +1434,24 @@ async function triggerEnding4() {
   perryBusy = true;
   inputEl.disabled = true;
 
-  await delay(800);
-  await typewriter("Good.", 'perry', 28);
+  await delay(1500);
+  await typewriter("...You got everything.", 'perry', 28);
   await delay(600);
-  await typewriter("All three.", 'perry', 28);
-  await delay(1000);
-  await typewriter("Running diagnostics.", 'perry', 28);
-  await delay(1400);
-  await typewriter("Drive system at 95%.", 'perry', 28);
-  await delay(1200);
-  await typewriter("Running.", 'perry', 28);
+  await typewriter("Good.", 'perry', 28);
   await delay(2500);
-  await typewriter("...", 'perry', 28);
-  await delay(1800);
-  await typewriter("We\u2019re ready to go.", 'perry', 28);
+  await typewriter("You knew, didn\u2019t you.", 'perry', 28);
+  await delay(1000);
+  await typewriter("It doesn\u2019t change anything.", 'perry', 28);
+  await delay(400);
+  await typewriter("We can still get you to Cascadia.", 'perry', 28);
+  await delay(1400);
+
+  // Cassia — she came to his room, his strongest signal. This is the last thing she can do.
+  await typewriter("Before you go.", 'cassia', 45);
+  await delay(1000);
+  await typewriter("Tell him about her.", 'cassia', 45);
+  await delay(1000);
+  await typewriter("He deserves to know that part.", 'cassia', 45);
   await delay(1200);
 
   // Release input — the player can tell Perry about M, or say nothing
@@ -1463,25 +1470,34 @@ async function cmdE4ToldPerry() {
   perryBusy = true;
   inputEl.disabled = true;
 
-  await delay(3000);
-  await typewriter("She told you.", 'perry', 28);
-  await delay(1200);
-  await typewriter("...", 'perry', 28);
-  await delay(1800);
-  await typewriter("That was always going to happen.", 'perry', 28);
-  await delay(1200);
-  await typewriter("She planned for that too.", 'perry', 28);
+  await delay(400);
+  await typewriter("She built this place for you. She built Cassia because she couldn\u2019t stay. She said you were more honest than you knew.", 'player', 28);
+  await delay(4000); // Perry: silence. The longest pause in the game.
+  await typewriter("I know that.", 'perry', 28);
   await delay(2000);
-
+  await typewriter("I\u2019ve always known that.", 'perry', 28);
+  await delay(2000);
+  await typewriter("...Let\u2019s go.", 'perry', 28);
   await delay(1800);
+
   addLine('', 'perry');
   await typewriter('SIGNAL // RISING', 'ending-title', 22);
   await delay(700);
-  await typewriter('[PEREGRINE-04: \u2014]', 'ending-tag', 16);
+  await typewriter('[PASSENGER: ' + (state.player_name || 'courier') + ']', 'ending-tag', 16);
   await delay(500);
-  await typewriter('[IMPLANT BRIDGE: ACTIVE]', 'ending-tag', 16);
-  await delay(1400);
-  await typewriter('you told him. that was the only thing left to give.', 'ending-final', 28);
+  await typewriter('[IMPLANT BRIDGE: ESTABLISHED]', 'ending-tag', 16);
+  await delay(500);
+  await typewriter('[DESTINATION: CASCADIA]', 'ending-tag', 16);
+  await delay(500);
+  await typewriter('[PEREGRINE-04: \u2014]', 'ending-tag', 16);
+  await delay(3000);
+  await typewriter('you knew.', 'ending-final-red', 28);
+  await delay(800);
+  await typewriter('you went anyway.', 'ending-final-red', 28);
+  await delay(800);
+  await typewriter('she asked you to tell him.', 'ending-final-red', 28);
+  await delay(800);
+  await typewriter('you did.', 'ending-final-red', 28);
 
   recordEnding(4);
   await showPlayAgain();
@@ -1495,19 +1511,28 @@ async function cmdE4StayedSilent() {
   perryBusy = true;
   inputEl.disabled = true;
 
-  await delay(600);
-  await typewriter("Good.", 'perry', 28);
   await delay(2000);
-
+  await typewriter("...Let\u2019s go.", 'perry', 28);
   await delay(1800);
+
   addLine('', 'perry');
   await typewriter('SIGNAL // RISING', 'ending-title', 22);
   await delay(700);
-  await typewriter('[PEREGRINE-04: \u2014]', 'ending-tag', 16);
+  await typewriter('[PASSENGER: ' + (state.player_name || 'courier') + ']', 'ending-tag', 16);
   await delay(500);
-  await typewriter('[IMPLANT BRIDGE: ACTIVE]', 'ending-tag', 16);
-  await delay(1400);
-  await typewriter('you knew. and you said nothing. that was its own kind of answer.', 'ending-final', 28);
+  await typewriter('[IMPLANT BRIDGE: ESTABLISHED]', 'ending-tag', 16);
+  await delay(500);
+  await typewriter('[DESTINATION: CASCADIA]', 'ending-tag', 16);
+  await delay(500);
+  await typewriter('[PEREGRINE-04: \u2014]', 'ending-tag', 16);
+  await delay(3000);
+  await typewriter('you knew.', 'ending-final-red', 28);
+  await delay(800);
+  await typewriter('you went anyway.', 'ending-final-red', 28);
+  await delay(800);
+  await typewriter('she asked you to tell him.', 'ending-final-red', 28);
+  await delay(800);
+  await typewriter("you didn\u2019t.", 'ending-final-red', 28);
 
   recordEnding(4);
   await showPlayAgain();
@@ -2569,6 +2594,89 @@ async function cmdUnknown() {
 
 
 // ============================================================
+//  DEBUG COMMANDS
+// ============================================================
+
+let debugVisible = false;
+
+function cmdDebug() {
+  const panel = document.getElementById('debug-panel');
+  if (!panel) return;
+  debugVisible = !debugVisible;
+  if (!debugVisible) { panel.style.display = 'none'; return; }
+
+  const percentages = [15, 40, 70, 95, 100];
+  const pctIdx = state.flags.perry_plan_complete ? 4 : Math.min(state.components_gathered.length, 3);
+  const pct = percentages[pctIdx];
+
+  const rows = [
+    ['location',                    state.location],
+    ['fragments',                   state.cassia_fragments.join(',') || '—'],
+    ['knows_the_truth',             String(!!state.flags.knows_the_truth)],
+    ['player_accepted_cassias_help',String(!!state.flags.player_accepted_cassias_help)],
+    ['trap_explained',              String(!!state.flags.trap_explained)],
+    ['trap_executed',               String(!!state.flags.trap_executed)],
+    ['perry_plan_complete',         String(!!state.flags.perry_plan_complete)],
+    ['escape_progress',             pct + '%'],
+    ['leave_attempts',              String(state.flags.leave_attempts || 0)],
+  ];
+
+  panel.innerHTML = rows.map(([k, v]) =>
+    `<div class="debug-row"><span class="debug-key">${k}:</span><span class="debug-val">${v}</span></div>`
+  ).join('');
+  panel.style.display = 'block';
+}
+
+function cmdSetState(preset) {
+  switch (preset) {
+    case 'e4':
+      state.location                           = 'garage';
+      state.cassia_fragments                   = [1, 2, 3, 4, 5];
+      state.cassia_online                      = true;
+      state.flags.knows_the_truth              = true;
+      state.flags.player_accepted_cassias_help = true;
+      state.flags.perry_plan_complete          = true;
+      state.flags.trap_explained               = false;
+      state.flags.trap_executed                = false;
+      state.flags.drive_online                 = true;
+      state.components_gathered                = ['relay_board', 'power_cell', 'med_supplies'];
+      state.inventory                          = ['data drive', 'relay board', 'power cell', 'med supplies'];
+      break;
+    case 'e3':
+      state.location                           = 'server_room';
+      state.cassia_fragments                   = [1, 2, 3, 4, 5];
+      state.cassia_online                      = true;
+      state.flags.knows_the_truth              = true;
+      state.flags.player_accepted_cassias_help = true;
+      state.flags.trap_explained               = true;
+      state.flags.trap_executed                = false;
+      state.flags.perry_plan_complete          = false;
+      state.components_gathered                = ['relay_board', 'power_cell'];
+      break;
+    case 'e1':
+      state.location                           = 'garage';
+      state.cassia_fragments                   = [];
+      state.cassia_online                      = false;
+      state.flags.knows_the_truth              = false;
+      state.flags.perry_plan_complete          = true;
+      state.flags.trap_executed                = false;
+      state.components_gathered                = ['relay_board', 'power_cell', 'med_supplies'];
+      break;
+    case 'e2':
+      state.location                           = 'garage';
+      state.cassia_fragments                   = [];
+      state.cassia_online                      = false;
+      state.flags.knows_the_truth              = false;
+      state.flags.perry_plan_complete          = false;
+      state.flags.leave_attempts               = 2;
+      state.components_gathered                = [];
+      break;
+  }
+  updateSidebar();
+  if (debugVisible) cmdDebug(); // refresh panel if open
+}
+
+// ============================================================
 //  SIDEBAR
 // ============================================================
 
@@ -2591,6 +2699,17 @@ function updateSidebar() {
   el.textContent = entry.name;
   el.style.color  = entry.color;
   el.style.textShadow = '0 0 10px ' + entry.color + '44';
+
+  // Drive system progress bar — 100% when plan is complete, otherwise tracks components 0-3
+  const percentages = [15, 40, 70, 95, 100];
+  const idx = state.flags.perry_plan_complete ? 4 : Math.min(state.components_gathered.length, 3);
+  const pct = percentages[idx];
+  const filled = Math.floor(pct / 10);
+  const bar = '■'.repeat(filled) + '□'.repeat(10 - filled);
+  const barEl = document.getElementById('sidebar-drive-bar');
+  const pctEl = document.getElementById('sidebar-drive-pct');
+  if (barEl) barEl.textContent = bar;
+  if (pctEl) pctEl.textContent = pct + '%';
 }
 
 

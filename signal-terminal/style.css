@@ -195,7 +195,7 @@ body {
 }
 
 .sidebar-label {
-  color: #334455;
+  color: #4EC9B0;
   letter-spacing: 0.18em;
   font-size: 10px;
   padding-bottom: 6px;
@@ -212,15 +212,29 @@ body {
 }
 
 .sidebar-cmd {
-  color: #2A3A4A;
+  color: #B8D4C4;
   letter-spacing: 0.04em;
   line-height: 1.8;
   user-select: none;
 }
 
+#sidebar-drive-bar {
+  color: #4EC9B0;
+  letter-spacing: 0.05em;
+  font-size: 11px;
+  user-select: none;
+}
+
+#sidebar-drive-pct {
+  color: #B8D4C4;
+  letter-spacing: 0.08em;
+  font-size: 10px;
+  user-select: none;
+}
+
 #sidebar-hint {
   margin-top: auto;
-  color: #1E2E3E;
+  color: #4A6A5A;
   letter-spacing: 0.06em;
   user-select: none;
 }
@@ -351,6 +365,39 @@ body {
 
 #cursor-line.hidden {
   visibility: hidden;
+}
+
+/* ============================================================
+   DEBUG PANEL
+   ============================================================ */
+
+#debug-panel {
+  flex-shrink: 0;
+  display: none;
+  background-color: #0A1A12;
+  border: 1px solid #1C2C1C;
+  border-radius: 3px;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+  font-size: 11px;
+  line-height: 1.9;
+  letter-spacing: 0.04em;
+}
+
+
+.debug-row {
+  display: flex;
+  gap: 8px;
+}
+
+.debug-key {
+  color: #4EC9B0;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.debug-val {
+  color: #ffffff;
 }
 
 /* ============================================================

@@ -263,6 +263,7 @@ async function beginGame() {
   await delay(1200);
   await cmdLook();
   state.flags.visited_garage = true;
+  updateSidebar();
 }
 
 
@@ -365,7 +366,7 @@ async function parseCommand(raw) {
 
   // From outside — any attempt to return routes back to airlock
   if (state.location === 'outside' &&
-      /^(inside|go inside|go back inside|enter|return inside|go through airlock|back inside|return)\b/i.test(raw.trim())) {
+      /^(inside|go inside|go back\b|go back inside|enter|return inside|go through airlock|back inside|return)\b/i.test(raw.trim())) {
     return cmdReturnInside();
   }
 
@@ -410,7 +411,7 @@ async function parseCommand(raw) {
     return cmdGo(rest);
   }
 
-  if (verb === 'INVENTORY' || verb === 'INV' || verb === 'I') {
+  if (verb === 'INVENTORY' || verb === 'INV' || (verb === 'I' && !rest)) {
     return cmdInventory();
   }
 
@@ -668,7 +669,7 @@ async function maybeLocationBriefing(key) {
  * Strips leading "the " and lowercases before alias lookup.
  */
 function resolveLocation(input) {
-  const s = input.toLowerCase().trim();
+  const s = input.toLowerCase().trim().replace(/^to\s+/, '');
   return LOCATION_ALIASES[s] || LOCATION_ALIASES[s.replace(/^the\s+/, '')] || null;
 }
 
@@ -720,7 +721,7 @@ async function cmdGo(destination) {
       return;
     }
     // Second+ attempt: no comment, fall through
-  } else if (key === 'airlock') {
+  } else if (key === 'airlock' || key === 'outside') {
     state.flags.airlock_attempts = (state.flags.airlock_attempts || 0) + 1;
     if (state.flags.airlock_attempts === 1) {
       await perrySpeak([
@@ -738,19 +739,18 @@ async function cmdGo(destination) {
       await cmdOpenAirlock();
       return;
     }
-  } else if (key === 'outside') {
-    await cmdOpenAirlock();
-    return;
   }
 
   // Garage — if all components gathered, bypass room description and go straight to ending
   if (key === 'garage' && state.flags.perry_plan_complete) {
     state.location = 'garage';
+    updateSidebar();
     await delay(400);
     return cmdReadyToGo();
   }
 
   state.location = key;
+  updateSidebar();
   await delay(400);
 
   if (state.flags['visited_' + key]) {
@@ -801,6 +801,21 @@ async function cmdExamine(target) {
     const cleaned = target.replace(/^the\s+/, '').replace(/^an?\s+/, '').trim();
     if (cleaned.includes('journal') || 'journal'.includes(cleaned)) {
       return cmdJournalInteract();
+    }
+  }
+
+  // Server room — reveal the lockdown switch once Cassia has explained it
+  if (state.location === 'server_room' && state.flags.trap_explained && !state.flags.trap_executed) {
+    const cleaned = target.replace(/^the\s+/, '').replace(/^an?\s+/, '').trim();
+    if (/north wall|behind.*rack|rack|switch/i.test(cleaned)) {
+      perryBusy = true;
+      await typewriter("Behind the second rack. A manual switch, mounted to the wall.", 'system', 22);
+      await delay(500);
+      await typewriter("Metal plate. LOCKDOWN printed in worn stencil.", 'system', 22);
+      await delay(500);
+      await typewriter("PULL SWITCH to use it.", 'system', 22);
+      perryBusy = false;
+      return;
     }
   }
 
@@ -959,6 +974,16 @@ async function triggerMedicalCassiaFragment() {
 async function cmdSearch() {
   if (state.location === 'outside') {
     return cmdOutsideSearch();
+  }
+  if (state.location === 'server_room' && state.flags.trap_explained && !state.flags.trap_executed) {
+    perryBusy = true;
+    await typewriter("Behind the second rack. A manual switch, mounted to the wall.", 'system', 22);
+    await delay(500);
+    await typewriter("Metal plate. LOCKDOWN printed in worn stencil.", 'system', 22);
+    await delay(500);
+    await typewriter("PULL SWITCH to use it.", 'system', 22);
+    perryBusy = false;
+    return;
   }
   if (state.location === 'server_room' && !state.flags.found_something_in_server_room) {
     return triggerCassiaFragment();
@@ -1271,6 +1296,7 @@ async function handlePlayAgainInput(raw) {
  */
 async function cmdReadyToGo() {
   state.location = 'garage';
+  updateSidebar();
   if (!state.flags.knows_the_truth) {
     return triggerEnding1();
   } else {
@@ -1387,6 +1413,10 @@ async function triggerEnding3() {
   await typewriter('[IMPLANT BRIDGE: SEVERED]', 'ending-tag', 16);
   await delay(1400);
   await typewriter('you found her. you listened.', 'ending-final', 28);
+  await delay(800);
+  await typewriter('she\u2019s still there.', 'ending-final-red', 28);
+  await delay(800);
+  await typewriter('she says she\u2019ll be alright.', 'ending-final-red', 28);
 
   recordEnding(3);
   await showPlayAgain();
@@ -1633,6 +1663,7 @@ async function triggerCrewQuartersCassiaFragment() {
  */
 async function cmdReturnInside() {
   state.location = 'airlock';
+  updateSidebar();
   await perrySpeak([
     "Good.",
     "The relay board is still the priority."
@@ -1665,7 +1696,10 @@ async function cmdOpenAirlock() {
     await typewriter(outsideLines[i], 'perry', 28);
     if (i < outsideLines.length - 1) await delay(600);
   }
+  await delay(1200);
+  await typewriter("The exterior wall looks like it hasn\u2019t been touched in years.", 'perry', 28);
   perryBusy = false;
+  updateSidebar();
 }
 
 /**
@@ -1874,6 +1908,7 @@ async function triggerFounderFragment() {
 async function triggerCassiaTruthSequence() {
   perryBusy = true;
   state.flags.player_ready_for_truth = true;
+  state.flags.knows_the_truth = true;
 
   const truthLines = [
     "Where do I start.",
@@ -2530,6 +2565,32 @@ async function cmdUnknown() {
     deflectionIndex++;
     await perrySpeak(lines);
   }
+}
+
+
+// ============================================================
+//  SIDEBAR
+// ============================================================
+
+const SIDEBAR_LOCATIONS = {
+  garage:         { name: 'GARAGE',             color: '#E8A830' },
+  communications: { name: 'COMMUNICATIONS',     color: '#4EC9B0' },
+  quarters:       { name: 'CREW QUARTERS',      color: '#7DB87D' },
+  server_room:    { name: 'SERVER ROOM',        color: '#C04040' },
+  medical:        { name: 'MEDICAL BAY',        color: '#D0D8E0' },
+  airlock:        { name: 'AIRLOCK',            color: '#D4A030' },
+  outside:        { name: 'OUTSIDE',            color: '#8AB4C8' },
+  founders:       { name: "FOUNDER'S QUARTERS", color: '#C8A060' }
+};
+
+function updateSidebar() {
+  const el = document.getElementById('sidebar-location');
+  if (!el) return;
+  const entry = SIDEBAR_LOCATIONS[state.location];
+  if (!entry) return;
+  el.textContent = entry.name;
+  el.style.color  = entry.color;
+  el.style.textShadow = '0 0 10px ' + entry.color + '44';
 }
 
 

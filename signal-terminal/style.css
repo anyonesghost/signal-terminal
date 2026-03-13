@@ -113,6 +113,8 @@ body {
 
 #bezel {
   flex: 1;
+  display: flex;
+  flex-direction: row;
   position: relative;
   border-radius: 6px;
   overflow: hidden;
@@ -161,11 +163,71 @@ body {
    ============================================================ */
 
 #terminal {
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  height: 100%;
   padding: 24px 32px 18px;
   background-color: #000000;
+}
+
+/* ============================================================
+   LOCATION + COMMAND SIDEBAR
+   ============================================================ */
+
+#sidebar {
+  width: 180px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  padding: 22px 16px 18px;
+  background-color: #080808;
+  border-left: 1px solid #1C1C1C;
+  font-size: 11px;
+  font-family: 'Fira Mono', 'Courier New', Courier, monospace;
+}
+
+.sidebar-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sidebar-label {
+  color: #334455;
+  letter-spacing: 0.18em;
+  font-size: 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #181818;
+  user-select: none;
+}
+
+#sidebar-location {
+  color: #E8A830;
+  letter-spacing: 0.1em;
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.sidebar-cmd {
+  color: #2A3A4A;
+  letter-spacing: 0.04em;
+  line-height: 1.8;
+  user-select: none;
+}
+
+#sidebar-hint {
+  margin-top: auto;
+  color: #1E2E3E;
+  letter-spacing: 0.06em;
+  user-select: none;
+}
+
+#sidebar-blink {
+  display: inline-block;
+  animation: blink 1.1s step-end infinite;
 }
 
 /* Output area — fills space, scrolls */
@@ -397,5 +459,9 @@ body {
 
   #terminal {
     padding: 16px 18px 14px;
+  }
+
+  #sidebar {
+    display: none;
   }
 }

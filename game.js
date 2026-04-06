@@ -231,7 +231,6 @@ async function handleNameInput(raw) {
 
   await delay(800);
   await beginGame();
-  saveGame();
 }
 
 
@@ -358,7 +357,6 @@ let unknownCount         = 0;
 async function handleGameInput(raw) {
   addPlayerLine(raw);
   await parseCommand(raw.trim());
-  saveGame();
 }
 
 async function parseCommand(raw) {
@@ -369,7 +367,6 @@ async function parseCommand(raw) {
   // Hidden debug commands — silent, no Perry response
   if (verb === 'DEBUG') { cmdDebug(); return; }
   if (verb === 'SETSTATE') { cmdSetState(rest); return; }
-  if (verb === 'CLEAR' && rest === 'save') { clearSave(); location.reload(); return; }
 
   // From outside — any attempt to return routes back to airlock
   if (state.location === 'outside' &&
@@ -1261,7 +1258,6 @@ async function showPlayAgain() {
 async function handlePlayAgainInput(raw) {
   const t = raw.trim().toLowerCase();
   if (t === 'y' || t === 'yes') {
-    clearSave();
     addPlayerLine(raw);
     inputEl.disabled = true;
     // Clear output lines (leave cursor-line in place)
@@ -1316,7 +1312,6 @@ async function cmdReadyToGo() {
  * Player never found Cassia. Perry gets what he needed.
  */
 async function triggerEnding1() {
-  clearSave();
   perryBusy = true;
   inputEl.disabled = true;
 
@@ -1357,7 +1352,6 @@ async function triggerEnding1() {
  * Player's perspective: the map, the road. Then the card.
  */
 async function triggerEnding2() {
-  clearSave();
   perryBusy = true;
   inputEl.disabled = true;
   await delay(1500);
@@ -1396,7 +1390,6 @@ async function triggerEnding2() {
  * Fires immediately from cmdPullSwitch — not via garage trigger.
  */
 async function triggerEnding3() {
-  clearSave();
   perryBusy = true;
   inputEl.disabled = true;
 
@@ -1438,7 +1431,6 @@ async function triggerEnding3() {
  * A moment of choice: tell Perry about M, or stay silent.
  */
 async function triggerEnding4() {
-  clearSave();
   perryBusy = true;
   inputEl.disabled = true;
 
@@ -2602,96 +2594,6 @@ async function cmdUnknown() {
 
 
 // ============================================================
-//  PERSISTENCE — save / load / clear
-// ============================================================
-
-const SAVE_KEY = 'signal_terminal_save';
-
-function saveGame() {
-  if (phase !== 'playing') return;
-  try {
-    // Capture rendered output lines — all children of outputEl except cursor-line
-    const parts = [];
-    for (const child of outputEl.children) {
-      if (child !== cursorLine) parts.push(child.outerHTML);
-    }
-
-    const save = {
-      version:            1,
-      player_name:        state.player_name,
-      location:           state.location,
-      cassia_fragments:   [...state.cassia_fragments],
-      cassia_online:      state.cassia_online,
-      drive_opened:       state.drive_opened,
-      knows_the_truth:    state.knows_the_truth,
-      perry_suspicious:   state.perry_suspicious,
-      flags:              { ...state.flags },
-      inventory:          [...state.inventory],
-      components_gathered:[...state.components_gathered],
-      terminalCmdCount:   terminalCmdCount,
-      sysDir:             sysDir,
-      terminal_history:   parts.join(''),
-    };
-    localStorage.setItem(SAVE_KEY, JSON.stringify(save));
-  } catch (e) {}
-}
-
-function clearSave() {
-  try { localStorage.removeItem(SAVE_KEY); } catch (e) {}
-}
-
-/**
- * Attempt to restore a saved session.
- * Returns true if a valid save was found and restored, false otherwise.
- */
-function loadGame() {
-  try {
-    const raw = localStorage.getItem(SAVE_KEY);
-    if (!raw) return false;
-    const save = JSON.parse(raw);
-    if (!save || save.version !== 1) return false;
-
-    // Restore state
-    state.player_name          = save.player_name || '';
-    state.location             = save.location || 'garage';
-    state.cassia_fragments     = save.cassia_fragments || [];
-    state.cassia_online        = !!save.cassia_online;
-    state.drive_opened         = !!save.drive_opened;
-    state.knows_the_truth      = !!save.knows_the_truth;
-    state.perry_suspicious     = save.perry_suspicious || 0;
-    state.flags                = save.flags || {};
-    state.inventory            = save.inventory || ['data drive'];
-    state.components_gathered  = save.components_gathered || [];
-    terminalCmdCount           = save.terminalCmdCount || 0;
-    sysDir                     = save.sysDir || null;
-    phase                      = 'playing';
-
-    // Restore terminal lines — inject before cursor-line so DOM refs stay valid
-    if (save.terminal_history) {
-      const tmp = document.createElement('div');
-      tmp.innerHTML = save.terminal_history;
-      while (tmp.firstChild) {
-        outputEl.insertBefore(tmp.firstChild, cursorLine);
-      }
-    }
-
-    addLine('— session restored —', 'glitch');
-    showCursor();
-    inputEl.disabled = false;
-    inputEl.focus();
-    updateSidebar();
-    scrollBottom();
-    return true;
-  } catch (e) {
-    return false;
-  }
-}
-
-function initGame() {
-  if (!loadGame()) bootSequence();
-}
-
-// ============================================================
 //  DEBUG COMMANDS
 // ============================================================
 
@@ -2772,7 +2674,6 @@ function cmdSetState(preset) {
   }
   updateSidebar();
   if (debugVisible) cmdDebug(); // refresh panel if open
-  saveGame();
 }
 
 // ============================================================
@@ -2846,4 +2747,4 @@ document.getElementById('rack').addEventListener('click', () => {
 //  INIT
 // ============================================================
 
-initGame();
+bootSequence();
